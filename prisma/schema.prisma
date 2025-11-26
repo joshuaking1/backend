@@ -1,0 +1,542 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// AUTH & ORGANIZATION MODELS
+// ==========================================
+
+model Organization {
+  id          String    @id @default(cuid())
+  name        String    @unique // Each shop must have a unique name
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations - will be updated after model definitions
+  users             User[]
+  serviceCategories ServiceCategory[] // <-- ADD THIS
+  services          Service[]         // <-- ADD THIS
+  inventoryCategories InventoryCategory[] // <-- ADD THIS
+  inventoryItems      InventoryItem[]     // <-- ADD THIS
+  suppliers           Supplier[]          // <-- ADD THIS
+  purchaseOrders      PurchaseOrder[]     // <-- ADD THIS
+  artistAvailabilities ArtistAvailability[] // <-- ADD THIS
+  blockouts            Blockout[]           // <-- ADD THIS
+  appointments         Appointment[]        // <-- ADD THIS
+  sales              Sale[]               // <-- ADD THIS
+  branches            Branch[] // <-- ADD THIS RELATION
+  commissionRules CommissionRule[] // <-- ADD THIS
+  payrolls        Payroll[]        // <-- ADD THIS
+}
+
+
+// ADD THE NEW BRANCH MODEL
+model Branch {
+  id             String   @id @default(cuid())
+  name           String
+  address        String?
+  phone          String?
+  isDefault      Boolean  @default(false) // The primary branch for an organization
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  
+  // A branch has its own staff members assigned to it
+  staff          User[]
+
+  // A branch has many inventory items
+  inventoryItems     InventoryItem[]
+  // A branch has many artist availabilities
+  artistAvailabilities ArtistAvailability[]
+  // A branch has many blockouts
+  blockouts          Blockout[]
+  // A branch has many appointments
+  appointments       Appointment[]
+  // A branch has many sales
+  sales              Sale[]
+  payrolls           Payroll[] // <-- ADD THIS
+
+  @@unique([organizationId, name])
+}
+
+// ==========================================
+// INVENTORY & SUPPLIER MODELS
+// ==========================================
+
+model InventoryCategory {
+  id             String          @id @default(cuid())
+  name           String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  organizationId String
+  items          InventoryItem[]
+}
+
+model Supplier {
+  id             String          @id @default(cuid())
+  name           String
+  contactPerson  String?
+  email          String?
+  phone          String?
+  address        String?
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  organizationId String
+  items          InventoryItem[] // A supplier can provide many items
+  purchaseOrders PurchaseOrder[] // A supplier can have many purchase orders
+
+  @@unique([organizationId, name])
+}
+
+model InventoryItem {
+  id             String    @id @default(cuid())
+  name           String
+  sku            String?   // Stock Keeping Unit
+  quantity       Int       @default(0)
+  reorderLevel   Int       @default(10) // Alert when quantity falls to this level
+  unitPrice      Float     @default(0) // Price per unit
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  organizationId String
+  category       InventoryCategory @relation(fields: [categoryId], references: [id])
+  categoryId     String
+  supplier       Supplier?       @relation(fields: [supplierId], references: [id])
+  supplierId     String?
+  
+  // A branch has its own inventory items
+  branch         Branch?          @relation(fields: [branchId], references: [id])
+  branchId       String?
+
+  purchaseOrderItems PurchaseOrderItem[]
+  saleItems          SaleItem[]
+}
+
+// Model for Purchase Orders (POs) sent to suppliers
+model PurchaseOrder {
+  id             String              @id @default(cuid())
+  status         PurchaseOrderStatus @default(PENDING)
+  notes          String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  organizationId String
+  supplier       Supplier            @relation(fields: [supplierId], references: [id])
+  supplierId     String
+  items          PurchaseOrderItem[] // The list of items in this PO
+}
+
+// The "join table" for the many-to-many relationship between POs and InventoryItems
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  quantity        Int
+  unitPrice       Float // The price at the time of purchase
+  
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  purchaseOrderId String
+  item            InventoryItem @relation(fields: [itemId], references: [id])
+  itemId          String
+}
+
+enum PurchaseOrderStatus {
+  PENDING
+  ORDERED
+  SHIPPED
+  RECEIVED
+  CANCELLED
+}
+
+model User {
+  id                 String      @id @default(cuid())
+  email              String      @unique
+  firstName          String
+  lastName           String
+  hashedPassword     String
+  hashedRefreshToken String?     // Used for JWT refresh token storage
+  role               UserRole    @default(ARTIST)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  
+  // Relations
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  organizationId     String
+
+  // A staff member belongs to a primary branch. Customers might not.
+  branch         Branch?  @relation(fields: [branchId], references: [id])
+  branchId       String?
+
+  staffProfile       StaffProfile? // One-to-one relation to StaffProfile
+  customerProfile    CustomerProfile? // One-to-one relation to CustomerProfile
+  
+  // Relation for Artist <-> Service (Many-to-Many)
+  services          ArtistsOnServices[] // <-- ADD THIS
+  
+  // As Artist
+  artistAvailabilities ArtistAvailability[] @relation("ArtistAvailabilities")
+  artistBlockouts      Blockout[]           @relation("ArtistBlockouts")
+  artistAppointments   Appointment[]        @relation("ArtistAppointments")
+  saleItemsAsArtist    SaleItem[]           // <-- ADD THIS
+
+  // As Customer
+  customerAppointments Appointment[] @relation("CustomerAppointments")
+
+  // As Customer
+  customerSales        Sale[]        @relation("CustomerSales")
+
+  // As Staff who processed a sale
+  processedSales     Sale[]               @relation("ProcessedByStaff")
+
+  payslips           Payslip[]            // <-- ADD THIS
+}
+
+// ==========================================
+// SERVICE & CATEGORY MODELS
+// ==========================================
+
+// Model for grouping services, e.g., "Tattoos", "Piercings"
+model ServiceCategory {
+  id             String    @id @default(cuid())
+  name           String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relation to Organization (One-to-Many)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  // Relation to Services (One-to-Many)
+  services       Service[]
+
+  @@unique([organizationId, name]) // A category name must be unique within an organization
+}
+
+// Model for the actual services offered
+model Service {
+  id             String    @id @default(cuid())
+  name           String
+  description    String?
+  duration       Int       // Duration in minutes
+  basePrice      Float     // Price in the smallest currency unit (e.g., cents)
+  isActive       Boolean   @default(true) // To easily activate/deactivate services
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relation to Organization (One-to-Many)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  // Relation to Category (One-to-Many)
+  category       ServiceCategory @relation(fields: [categoryId], references: [id])
+  categoryId     String
+
+  // Relation for Artist <-> Service (Many-to-Many)
+  artists        ArtistsOnServices[]
+
+  // Relation to Appointments (One-to-Many)
+  appointments   Appointment[] // <-- ADD THIS
+  saleItems      SaleItem[]
+}
+
+// This is the explicit "join table" for the many-to-many relationship
+// between Artists (Users) and Services.
+model ArtistsOnServices {
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId  String
+  assignedAt DateTime @default(now())
+
+  @@id([userId, serviceId]) // Defines a composite primary key
+}
+
+model StaffProfile {
+  id              String    @id @default(cuid())
+  bio             String?   // A short bio for the artist/staff
+  phone           String?
+  instagramHandle String?
+  commissionRate  Float     @default(0.5) // Example: 0.5 for 50%
+  isClockedIn     Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relation to User
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String    @unique // Ensures one profile per user
+  baseSalary     Float? // Monthly or hourly base rate
+  salaryType     SalaryType @default(MONTHLY)
+  
+  // Relation to the commission structure they follow
+  commissionRule   CommissionRule? @relation(fields: [commissionRuleId], references: [id])
+  commissionRuleId String?
+}
+
+enum UserRole {
+  SUPER_ADMIN   // The platform owner (you)
+  ADMIN         // Shop Owner
+  MANAGER
+  CASHIER
+  ARTIST
+  RECEPTIONIST
+  CUSTOMER
+}
+
+model CustomerProfile {
+  id              String    @id @default(cuid())
+  phone           String?
+  dateOfBirth     DateTime?  // For age verification and marketing
+  address         String?    // Billing/shipping address
+  allergies       String?    // Any known allergies the customer has
+  notes           String?    // Any special notes about the customer
+  isSubscribed    Boolean   @default(true) // For marketing emails
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relation to User
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String    @unique // Ensures one profile per user
+}
+
+// ==========================================
+// BOOKING & CALENDAR MODELS
+// ==========================================
+
+model ArtistAvailability {
+  id        String    @id @default(cuid())
+  // 1 = Monday, 2 = Tuesday, ..., 7 = Sunday
+  dayOfWeek Int       @db.SmallInt
+  // Time stored as minutes from midnight, e.g., 9:30 AM = 570
+  startTime Int
+  endTime   Int
+
+  // Relation to Artist
+  artist    User      @relation("ArtistAvailabilities", fields: [artistId], references: [id], onDelete: Cascade)
+  artistId  String
+
+  // Relation to Organization
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  // A branch has its own artist availabilities
+  branch         Branch?          @relation(fields: [branchId], references: [id])
+  branchId       String?
+
+  @@unique([artistId, dayOfWeek]) // An artist can only have one schedule per day of the week
+}
+
+model Blockout {
+  id        String    @id @default(cuid())
+  startTime DateTime
+  endTime   DateTime
+  reason    String?
+
+  // Relation to Artist
+  artist    User      @relation("ArtistBlockouts", fields: [artistId], references: [id], onDelete: Cascade)
+  artistId  String
+
+  // Relation to Organization
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  // A branch has its own blockouts
+  branch         Branch?          @relation(fields: [branchId], references: [id])
+  branchId       String?
+}
+
+model Appointment {
+  id             String            @id @default(cuid())
+  startTime      DateTime
+  endTime        DateTime
+  status         AppointmentStatus @default(PENDING)
+  notes          String?           // Notes from the customer or staff
+  
+  // Financials
+  price          Float             // Final price of the service
+  depositAmount  Float             @default(0)
+  isDepositPaid  Boolean           @default(false)
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  // Relation to Artist
+  artist         User              @relation("ArtistAppointments", fields: [artistId], references: [id])
+  artistId       String
+
+  // Relation to Customer
+  customer       User              @relation("CustomerAppointments", fields: [customerUserId], references: [id])
+  customerUserId String
+  
+  // Relation to Service
+  service        Service           @relation(fields: [serviceId], references: [id])
+  serviceId      String
+
+  // Relation to Organization
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  // A branch has its own appointments
+  branch         Branch?          @relation(fields: [branchId], references: [id])
+  branchId       String?
+
+  sale             Sale?                // <-- ADD THIS (One-to-one)
+}
+
+enum AppointmentStatus {
+  PENDING      // Awaiting confirmation or deposit
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+
+// ==========================================
+// POINT OF SALE (POS) MODELS
+// ==========================================
+
+model Sale {
+  id              String       @id @default(cuid())
+  subtotal        Float        // Total before tax and discounts
+  taxAmount       Float        @default(0)
+  discountAmount  Float        @default(0)
+  total           Float        // Final amount paid
+  notes           String?
+  createdAt       DateTime     @default(now())
+
+  // Relation to Organization
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  organizationId  String
+
+  // Relation to the Customer
+  customer        User         @relation("CustomerSales", fields: [customerUserId], references: [id])
+  customerUserId  String
+
+  // Relation to the Staff member who processed the sale
+  processedBy     User         @relation("ProcessedByStaff", fields: [processedByStaffId], references: [id])
+  processedByStaffId String
+
+  // Optional one-to-one link to an Appointment
+  appointment     Appointment? @relation(fields: [appointmentId], references: [id])
+  appointmentId   String?      @unique
+
+  // A branch has its own sales
+  branch         Branch?          @relation(fields: [branchId], references: [id])
+  branchId       String?
+
+  // A sale is composed of multiple items and can have multiple payments
+  items           SaleItem[]
+  payments        Payment[]
+}
+
+model SaleItem {
+  id               String   @id @default(cuid())
+  quantity         Int
+  priceAtTimeOfSale Float   // The price of the item when it was sold
+  
+  // Relation to the parent Sale
+  sale             Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  saleId           String
+
+  // These fields create a "polymorphic" relationship.
+  // A SaleItem can be EITHER a service OR an inventory item.
+  service          Service?       @relation(fields: [serviceId], references: [id])
+  serviceId        String?
+  inventoryItem    InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+  inventoryItemId  String?
+  // This is for walk-in services not tied to an appointment, or for product sales commission
+  artist         User?    @relation(fields: [artistId], references: [id])
+  artistId       String?
+}
+model Payment {
+  id              String        @id @default(cuid())
+  amount          Float
+  method          PaymentMethod
+  transactionId   String?       // For card or mobile money payments
+  createdAt       DateTime      @default(now())
+
+  // Relation to the parent Sale
+  sale            Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  saleId          String
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE_MONEY
+  BANK_TRANSFER
+}
+
+// ==========================================
+// PAYROLL & HR MODELS
+// ==========================================
+
+model CommissionRule {
+  id             String         @id @default(cuid())
+  name           String         // e.g., "Senior Artist Tiered Commission"
+  
+  // A JSON field to store flexible, multi-level tiers
+  // Example: [{ "threshold": 1000, "rate": 0.10 }, { "threshold": 5000, "rate": 0.15 }]
+  tiers          Json 
+  
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  organizationId String 
+  
+  staff          StaffProfile[] 
+  
+  @@unique([organizationId, name]) 
+}
+
+model Payroll {
+  id             String        @id @default(cuid())
+  startDate      DateTime 
+  endDate        DateTime 
+  status         PayrollStatus @default(PENDING) 
+  notes          String? 
+  createdAt      DateTime      @default(now()) 
+
+  branch         Branch        @relation(fields: [branchId], references: [id])
+  branchId       String 
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organizationId String 
+  
+  payslips       Payslip[] 
+}
+
+model Payslip {
+  id                String   @id @default(cuid())
+  baseSalary        Float 
+  totalCommission   Float 
+  bonuses           Float    @default(0) 
+  deductions        Float    @default(0) 
+  netPay            Float 
+  currency          String 
+  notes             String? 
+  createdAt         DateTime @default(now()) 
+
+  payroll           Payroll  @relation(fields: [payrollId], references: [id], onDelete: Cascade) 
+  payrollId         String 
+  employee          User     @relation(fields: [employeeId], references: [id]) 
+  employeeId        String 
+}
+
+enum SalaryType {
+  MONTHLY 
+  HOURLY 
+}
+
+enum PayrollStatus {
+  PENDING 
+  PROCESSING 
+  COMPLETED 
+  FAILED 
+}
