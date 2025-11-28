@@ -38,6 +38,9 @@ model Organization {
   payrolls        Payroll[]        // <-- ADD THIS
   expenseCategories ExpenseCategory[] // <-- ADD THIS
   expenses        Expense[]         // <-- ADD THIS
+  attendanceSettings AttendanceSettings? // <-- ADD THIS
+  attendances       Attendance[]       // <-- ADD THIS
+  leaveRequests     LeaveRequest[]     // <-- ADD THIS
 }
 
 
@@ -69,6 +72,7 @@ model Branch {
   sales              Sale[]
   payrolls           Payroll[] // <-- ADD THIS
   expenses           Expense[] // <-- ADD THIS
+  attendances         Attendance[] // <-- ADD THIS
 
   @@unique([organizationId, name])
 }
@@ -202,6 +206,9 @@ model User {
 
   payslips           Payslip[]            // <-- ADD THIS
   recordedExpenses   Expense[]            @relation("RecordedExpenses") // <-- ADD THIS
+  attendances        Attendance[]         // <-- ADD THIS
+  leaveRequests      LeaveRequest[]       // <-- ADD THIS
+  approvedLeaveRequests LeaveRequest[]    @relation("ApprovedLeaveRequests") // <-- ADD THIS
 }
 
 // ==========================================
@@ -591,4 +598,124 @@ model Expense {
   @@index([categoryId])
   @@index([date])
   @@index([recordedById])
+}
+
+// ==========================================
+// ATTENDANCE MANAGEMENT MODELS
+// ==========================================
+
+model AttendanceSettings {
+  id                   String    @id @default(cuid())
+  workStartTime        Int       @default(540)    // 9:00 AM in minutes from midnight
+  workEndTime          Int       @default(1020)   // 5:00 PM in minutes from midnight
+  gracePeriodMinutes   Int       @default(15)     // Grace period for late arrival
+  overtimeThreshold    Float     @default(8.0)    // Hours per day before overtime
+  requireLocation      Boolean   @default(false)  // Require location on clock-in
+  autoClockOutHours    Int       @default(12)     // Auto clock-out after X hours
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  
+  // Relations
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  organizationId       String
+  
+  @@unique([organizationId])
+}
+
+model Attendance {
+  id            String            @id @default(cuid())
+  clockInTime   DateTime          @default(now())
+  clockOutTime  DateTime?
+  totalHours    Float?            // Calculated on clock-out
+  status        AttendanceStatus  @default(CLOCKED_IN)
+  location      String?           // GPS/branch location
+  notes         String?
+  isLate        Boolean           @default(false)
+  lateMinutes   Int               @default(0)
+  overtimeHours Float             @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  
+  // Relations
+  employee      User              @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  branch        Branch?           @relation(fields: [branchId], references: [id])
+  branchId      String?
+  organization  Organization      @relation(fields: [organizationId], references: [id])
+  organizationId String
+  breaks        Break[]
+  
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([employeeId])
+  @@index([clockInTime])
+  @@index([status])
+}
+
+model Break {
+  id        String     @id @default(cuid())
+  startTime DateTime   @default(now())
+  endTime   DateTime?
+  duration  Int?       // Minutes, calculated on end
+  type      BreakType
+  createdAt DateTime   @default(now())
+  
+  // Relations
+  attendance Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  attendanceId String
+  
+  @@index([attendanceId])
+}
+
+model LeaveRequest {
+  id            String       @id @default(cuid())
+  startDate     DateTime
+  endDate       DateTime
+  type          LeaveType
+  status        LeaveStatus  @default(PENDING)
+  reason        String
+  notes         String?
+  approvedById  String?
+  approvedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  
+  // Relations
+  employee      User         @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  approver      User?        @relation("ApprovedLeaveRequests", fields: [approvedById], references: [id])
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+// Enums for attendance system
+enum AttendanceStatus {
+  CLOCKED_IN
+  CLOCKED_OUT
+  INCOMPLETE
+}
+
+enum BreakType {
+  LUNCH
+  SHORT
+  PERSONAL
+}
+
+enum LeaveType {
+  VACATION
+  SICK
+  PERSONAL
+  UNPAID
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

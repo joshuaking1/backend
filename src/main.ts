@@ -5,9 +5,16 @@ import { ValidationPipe } from '@nestjs/common'; // 1. Import ValidationPipe
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Relaxed CORS for local development: allow any origin with credentials
+  // We will get this URL in the next step from Vercel. For now, we can prepare.
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
   app.enableCors({
-    origin: true,
+    origin: [
+      'http://localhost:5173',
+      'https://your-vercel-app.vercel.app', // Keep for local development
+      // We will add our Vercel URL here later
+      frontendUrl, // Dynamic frontend URL from environment variable
+    ],
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   });

@@ -21,6 +21,10 @@ import { PayrollModule } from './payroll/payroll.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ExpenseCategoriesModule } from './expense-categories/expense-categories.module';
 import { ExpensesModule } from './expenses/expenses.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { LeaveRequestsModule } from './leave-requests/leave-requests.module';
+import { AttendanceSettingsModule } from './attendance-settings/attendance-settings.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -44,6 +48,10 @@ import { ExpensesModule } from './expenses/expenses.module';
     DashboardModule,
     ExpenseCategoriesModule,
     ExpensesModule,
+    AttendanceModule,
+    LeaveRequestsModule,
+    AttendanceSettingsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
