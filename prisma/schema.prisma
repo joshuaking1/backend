@@ -36,6 +36,8 @@ model Organization {
   branches            Branch[] // <-- ADD THIS RELATION
   commissionRules CommissionRule[] // <-- ADD THIS
   payrolls        Payroll[]        // <-- ADD THIS
+  expenseCategories ExpenseCategory[] // <-- ADD THIS
+  expenses        Expense[]         // <-- ADD THIS
 }
 
 
@@ -66,6 +68,7 @@ model Branch {
   // A branch has many sales
   sales              Sale[]
   payrolls           Payroll[] // <-- ADD THIS
+  expenses           Expense[] // <-- ADD THIS
 
   @@unique([organizationId, name])
 }
@@ -198,6 +201,7 @@ model User {
   processedSales     Sale[]               @relation("ProcessedByStaff")
 
   payslips           Payslip[]            // <-- ADD THIS
+  recordedExpenses   Expense[]            @relation("RecordedExpenses") // <-- ADD THIS
 }
 
 // ==========================================
@@ -539,4 +543,52 @@ enum PayrollStatus {
   PROCESSING 
   COMPLETED 
   FAILED 
+}
+
+// ==========================================
+// EXPENSE MANAGEMENT MODELS
+// ==========================================
+
+model ExpenseCategory {
+  id            String    @id @default(cuid())
+  name          String    // e.g., "Rent", "Utilities", "Marketing", "Supplies"
+  description   String?   // Optional description
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  expenses      Expense[]
+  
+  @@unique([organizationId, name])
+}
+
+model Expense {
+  id            String    @id @default(cuid())
+  amount        Float
+  date          DateTime
+  description   String
+  vendor        String?
+  receiptUrl    String?
+  paymentMethod PaymentMethod
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  branch        Branch?      @relation(fields: [branchId], references: [id])
+  branchId      String?
+  category      ExpenseCategory @relation(fields: [categoryId], references: [id])
+  categoryId    String
+  recordedBy    User         @relation("RecordedExpenses", fields: [recordedById], references: [id])
+  recordedById  String
+  
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([categoryId])
+  @@index([date])
+  @@index([recordedById])
 }

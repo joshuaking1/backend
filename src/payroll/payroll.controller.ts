@@ -26,6 +26,11 @@ export class PayrollController {
     return this.payrollService.findAllForOrg(organizationId);
   }
 
+  @Get('payslips/:id')
+  findPayslipById(@Param('id') id: string, @GetUser('organizationId') organizationId: string) {
+    return this.payrollService.findPayslipById(id, organizationId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.payrollService.findOneWithPayslips(id);

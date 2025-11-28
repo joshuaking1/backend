@@ -19,6 +19,8 @@ import { BranchesModule } from './branches/branches.module';
 import { CommissionRulesModule } from './commission-rules/commission-rules.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ExpenseCategoriesModule } from './expense-categories/expense-categories.module';
+import { ExpensesModule } from './expenses/expenses.module';
 
 @Module({
   imports: [
@@ -40,6 +42,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     CommissionRulesModule,
     PayrollModule,
     DashboardModule,
+    ExpenseCategoriesModule,
+    ExpensesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

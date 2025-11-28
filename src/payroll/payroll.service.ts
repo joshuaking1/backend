@@ -167,4 +167,35 @@ export class PayrollService {
     if (!payroll) throw new NotFoundException('Payroll run not found.');
     return payroll;
   }
+
+  async findPayslipById(payslipId: string, organizationId: string) {
+    const payslip = await this.prisma.payslip.findFirst({
+      where: {
+        id: payslipId,
+        payroll: {
+          organizationId,
+        },
+      },
+      include: {
+        employee: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+        payroll: {
+          include: {
+            branch: true,
+          },
+        },
+      },
+    });
+
+    if (!payslip) {
+      throw new NotFoundException('Payslip not found.');
+    }
+
+    return payslip;
+  }
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { subDays } from 'date-fns';
+import { subDays, subMonths, subYears, startOfMonth, endOfMonth, differenceInDays } from 'date-fns';
 
 @Injectable()
 export class DashboardService {
@@ -15,7 +16,7 @@ export class DashboardService {
 
     const whereClause = {
       organizationId,
-      branchId: branchId, // Prisma handles undefined correctly (no filter)
+      branchId: branchId || undefined, // Prisma handles undefined correctly (no filter)
       createdAt: { gte: last30Days },
     };
 
@@ -146,5 +147,322 @@ export class DashboardService {
         ...s,
         serviceName: services.find(svc => svc.id === s.serviceId)?.name
     }));
+  }
+
+  /**
+   * Calculate total expenses for the last 30 days.
+   */
+  async getTotalExpenses(organizationId: string, branchId?: string) {
+    const last30Days = subDays(new Date(), 30);
+
+    const result = await this.prisma.expense.aggregate({
+      _sum: { amount: true },
+      where: {
+        organizationId,
+        branchId: branchId || undefined, // Prisma handles undefined correctly (no filter)
+        createdAt: { gte: last30Days },
+      },
+    });
+
+    return { total: result._sum.amount || 0 };
+  }
+
+  /**
+   * Group expenses by category for the last 30 days.
+   */
+  async getExpensesByCategory(organizationId: string, branchId?: string, startDate?: Date, endDate?: Date) {
+    const defaultLast30Days = subDays(new Date(), 30);
+    const start = startDate || defaultLast30Days;
+    const end = endDate || new Date();
+
+    const expensesByCategory = await this.prisma.expense.groupBy({
+      by: ['categoryId'],
+      where: {
+        organizationId,
+        branchId: branchId || undefined,
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      },
+      _sum: { amount: true },
+      orderBy: {
+        _sum: { amount: 'desc' },
+      },
+    });
+
+    // Fetch category names for the IDs
+    const categoryIds = expensesByCategory
+      .map(e => e.categoryId)
+      .filter((id): id is string => id !== null);
+      
+    const categories = await this.prisma.expenseCategory.findMany({
+      where: { id: { in: categoryIds } },
+      select: { id: true, name: true },
+    });
+
+    return expensesByCategory.map(e => ({
+      categoryId: e.categoryId,
+      categoryName: categories.find(cat => cat.id === e.categoryId)?.name || 'Unknown',
+      amount: e._sum.amount || 0, // Changed from 'total' to 'amount'
+    }));
+  }
+
+  /**
+   * Calculate profit/loss for the last 30 days.
+   */
+  async getProfitLoss(organizationId: string, branchId?: string) {
+    const last30Days = subDays(new Date(), 30);
+
+    // Get total revenue from sales (reuse logic from getKpis)
+    const salesData = await this.prisma.sale.aggregate({
+      _sum: { total: true },
+      where: {
+        organizationId,
+        branchId: branchId || undefined, // Prisma handles undefined correctly (no filter)
+        createdAt: { gte: last30Days },
+      },
+    });
+
+    // Get total expenses
+    const totalExpensesResult = await this.getTotalExpenses(organizationId, branchId);
+    const totalExpenses = totalExpensesResult.total;
+
+    // Get total payroll costs - FIXED: Use createdAt and access organizationId through payroll relation
+    const payrollData = await this.prisma.payslip.aggregate({
+      _sum: { netPay: true },
+      where: {
+        payroll: {
+          organizationId,
+          branchId: branchId || undefined, // Prisma handles undefined correctly (no filter)
+        },
+        createdAt: { gte: last30Days },
+      },
+    });
+
+    const totalRevenue = salesData._sum.total || 0;
+    const totalPayroll = payrollData._sum?.netPay || 0;
+    const netProfit = totalRevenue - totalExpenses - totalPayroll;
+
+    return {
+      totalRevenue,
+      totalExpenses,
+      totalPayroll,
+      netProfit,
+      period: 'Last 30 Days',
+    };
+  }
+
+  /**
+   * Get comprehensive financial report for a date range.
+   */
+  async getFinancialReport(organizationId: string, startDate: Date, endDate: Date, branchId?: string) {
+    // 1. Calculate comparison periods
+    const daysDifference = differenceInDays(endDate, startDate) + 1;
+    const previousPeriodStart = subDays(startDate, daysDifference);
+    const previousPeriodEnd = subDays(startDate, 1);
+    const lastYearStart = subYears(startDate, 1);
+    const lastYearEnd = subYears(endDate, 1);
+
+    // 2. Fetch data in parallel
+    const [
+      revenueData,
+      expenseData,
+      payrollData,
+      revenueOverTime,
+      expensesOverTime,
+      previousPeriodData,
+      lastYearData,
+      expensesByCategory,
+    ] = await Promise.all([
+      // Current period revenue
+      this.prisma.sale.aggregate({
+        _sum: { total: true },
+        where: {
+          organizationId,
+          branchId: branchId || undefined,
+          createdAt: { gte: startDate, lte: endDate },
+        },
+      }),
+      // Current period expenses
+      this.prisma.expense.aggregate({
+        _sum: { amount: true },
+        where: {
+          organizationId,
+          branchId: branchId || undefined,
+          createdAt: { gte: startDate, lte: endDate },
+        },
+      }),
+      // Current period payroll - FIXED: Use createdAt and access organizationId through payroll relation
+      this.prisma.payslip.aggregate({
+        _sum: { netPay: true },
+        where: {
+          payroll: {
+            organizationId,
+            branchId: branchId || undefined,
+          },
+          createdAt: { gte: startDate, lte: endDate },
+        },
+      }),
+      // Revenue over time (grouped by day)
+      this.getRevenueOverTime(organizationId, startDate, endDate, branchId),
+      // Expenses over time (grouped by day)
+      this.getExpensesOverTime(organizationId, startDate, endDate, branchId),
+      // Previous period data for MoM comparison
+      this.getPeriodSummary(organizationId, previousPeriodStart, previousPeriodEnd, branchId),
+      // Last year data for YoY comparison
+      this.getPeriodSummary(organizationId, lastYearStart, lastYearEnd, branchId),
+      // Expenses by category
+      this.getExpensesByCategory(organizationId, branchId, startDate, endDate),
+    ]);
+
+    // 3. Calculate metrics
+    const totalRevenue = revenueData._sum.total || 0;
+    const totalExpenses = expenseData._sum.amount || 0;
+    const totalPayroll = payrollData._sum?.netPay || 0;
+    const netProfit = totalRevenue - totalExpenses - totalPayroll;
+
+    // 4. Calculate percentage changes
+    const calculateChange = (current: number, previous: number) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / Math.abs(previous)) * 100;
+    };
+
+    // 5. Prepare response
+    return {
+      summary: {
+        totalRevenue,
+        totalExpenses,
+        totalPayroll,
+        netProfit,
+        period: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        },
+      },
+      revenueOverTime,
+      expensesOverTime,
+      expensesByCategory,
+      comparisons: {
+        monthOverMonth: {
+          revenue: calculateChange(totalRevenue, previousPeriodData.revenue),
+          expenses: calculateChange(totalExpenses, previousPeriodData.expenses),
+          payroll: calculateChange(totalPayroll, previousPeriodData.payroll),
+          profit: calculateChange(netProfit, previousPeriodData.profit),
+        },
+        yearOverYear: {
+          revenue: calculateChange(totalRevenue, lastYearData.revenue),
+          expenses: calculateChange(totalExpenses, lastYearData.expenses),
+          payroll: calculateChange(totalPayroll, lastYearData.payroll),
+          profit: calculateChange(netProfit, lastYearData.profit),
+        },
+      },
+    };
+  }
+
+  /**
+   * Helper method to get revenue over time grouped by day.
+   */
+  private async getRevenueOverTime(organizationId: string, startDate: Date, endDate: Date, branchId?: string) {
+    const result = await this.prisma.sale.groupBy({
+      by: ['createdAt'],
+      where: {
+        organizationId,
+        branchId: branchId || undefined,
+        createdAt: { gte: startDate, lte: endDate },
+      },
+      _sum: {
+        total: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    // Group by date string
+    const dailyRevenue = {};
+    result.forEach(r => {
+      const date = r.createdAt.toISOString().split('T')[0];
+      if (!dailyRevenue[date]) {
+        dailyRevenue[date] = 0;
+      }
+      dailyRevenue[date] += r._sum.total || 0;
+    });
+
+    return Object.entries(dailyRevenue).map(([date, amount]) => ({ date, amount }));
+  }
+
+  /**
+   * Helper method to get expenses over time grouped by day.
+   */
+  private async getExpensesOverTime(organizationId: string, startDate: Date, endDate: Date, branchId?: string) {
+    const result = await this.prisma.expense.groupBy({
+      by: ['createdAt'],
+      where: {
+        organizationId,
+        branchId: branchId || undefined,
+        createdAt: { gte: startDate, lte: endDate },
+      },
+      _sum: {
+        amount: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    // Group by date string
+    const dailyExpenses = {};
+    result.forEach(r => {
+      const date = r.createdAt.toISOString().split('T')[0];
+      if (!dailyExpenses[date]) {
+        dailyExpenses[date] = 0;
+      }
+      dailyExpenses[date] += r._sum.amount || 0;
+    });
+
+    return Object.entries(dailyExpenses).map(([date, amount]) => ({ date, amount }));
+  }
+
+  /**
+   * Helper method to get summary for a period.
+   */
+  private async getPeriodSummary(organizationId: string, startDate: Date, endDate: Date, branchId?: string) {
+    const [revenueData, expenseData, payrollData] = await Promise.all([
+      this.prisma.sale.aggregate({
+        _sum: { total: true },
+        where: {
+          organizationId,
+          branchId: branchId || undefined,
+          createdAt: { gte: startDate, lte: endDate },
+        },
+      }),
+      this.prisma.expense.aggregate({
+        _sum: { amount: true },
+        where: {
+          organizationId,
+          branchId: branchId || undefined,
+          createdAt: { gte: startDate, lte: endDate },
+        },
+      }),
+      // FIXED: Use createdAt and access organizationId through payroll relation
+      this.prisma.payslip.aggregate({
+        _sum: { netPay: true },
+        where: {
+          payroll: {
+            organizationId,
+            branchId: branchId || undefined,
+          },
+          createdAt: { gte: startDate, lte: endDate },
+        },
+      }),
+    ]);
+
+    const revenue = revenueData._sum.total || 0;
+    const expenses = expenseData._sum.amount || 0;
+    const payroll = payrollData._sum?.netPay || 0;
+    const profit = revenue - expenses - payroll;
+
+    return { revenue, expenses, payroll, profit };
   }
 }
