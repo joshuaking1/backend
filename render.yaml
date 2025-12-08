@@ -4,8 +4,8 @@ services:
     name: tattoo-shop-backend
     env: node
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm run start:prod
+    buildCommand: bash -lc "cd backend && npm install && npm run build"
+    startCommand: bash -lc "cd backend && npm run start:prod"
     healthCheckPath: /health
     
     # Environment variables
@@ -18,7 +18,7 @@ services:
         sync: false  # Will be configured in Render dashboard
       - key: JWT_SECRET
         sync: false  # Will be configured in Render dashboard
-      - key: JWT_REFRESH_SECRET
+      - key: REFRESH_TOKEN_SECRET
         sync: false  # Will be configured in Render dashboard
 
   # Frontend Web Service (if deploying to Render instead of Vercel)
